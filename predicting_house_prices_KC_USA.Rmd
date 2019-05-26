@@ -1,0 +1,568 @@
+---
+title: "Individual Project"
+author: "Martin Hofbauer"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='Figures/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+# Introduction
+
+The assignment is to predict house prices in King County, USA,  using the following kaggle dataset:
+Initially, the required lackages and the data will be loaded, then - if necessary - some data cleaning and adjustments will be done and an EDA will be created. Afterwards, a baseling will be made and evaluated, and based on the performance, the author then decides on how to further proceed.
+
+# Data Reading and Preparation
+
+## Loading the required Packages
+
+```{r sources}
+source("Train_Test_Split.R")
+source("load_libraries.R")
+```
+
+## Loading the Data
+The dataset is offered in two separated files, one for the training and another one for the test.
+
+```{r data_loading}
+train <- read.csv("datasets/house_price_train.csv")
+
+test <- read.csv("datasets/house_price_test.csv")
+
+```
+
+## Initial Information of the Datasets
+Training and Test are mostly similar, only that the target variable is not available in test (as it has to be predicted there). As can be seen, a couple of transformations have to be performed as some variables don't have the correct data type.
+
+```{r initial_information}
+
+sum(is.na(train))
+sum(is.na(test))
+
+str(train)
+str(test)
+```
+
+
+## First steps
+
+In order not to apply all transformations and feature engineering twice (one for training and one for test), the datasets are joined. Furthermore, the id will be saved separately in order to lateron grant easy readability. Additionally, as no price is given in the test set, 0 will be imputed to be abled to make the join.
+
+```{r joining_train&test}
+
+test_labels <- test$id
+
+test$id <- NULL
+
+train$id <- NULL
+
+test$price <- 0
+
+all <- rbind(train, test)
+
+colall <- colnames(all)
+
+summary(all)
+
+```
+
+# EDA
+## Plot of Target variable 
+As one can see, the price is right skewed. This can be expected as only few people can afford expensive houses. Therefore, this variable will be normalized.
+
+```{r target_plot}
+price_1 <-ggplot(all, aes(x = price),) +
+  geom_histogram(fill = '#800020', binwidth = 200000, center = 100000) +
+  theme_linedraw() + 
+  labs(x = 'Price 1', y = 'Frequency', title = "House Sales") +
+  scale_y_continuous(labels = scales::comma, limits = c(0,8000)) + 
+  scale_x_continuous(labels = scales::comma)
+price_1
+
+all$price = log(all$price)
+
+price_2 <- ggplot(all, aes(x = price)) +
+  geom_histogram(fill = '#800020') +
+  theme_linedraw() + 
+  labs(x = 'Price Normalized', y = 'Frequency', title = "House Sales") +
+  scale_y_continuous(labels = scales::comma, limits = c(0,8000)) + 
+  scale_x_continuous(labels = scales::comma)
+price_2
+```
+## Map
+
+```{r map}
+train$PriceBin<-cut(train$price, c(0,250e3,500e3,750e3,1e6,2e6,999e6))
+
+center_lon = median(train$long,na.rm = TRUE)
+center_lat = median(train$lat,na.rm = TRUE)
+
+factpal <- colorFactor(c("black","blue","yellow","orange","#0B5345","red"), 
+                       train$PriceBin)
+
+
+leaflet(train) %>% addProviderTiles("Esri.NatGeoWorldMap") %>%
+  addCircles(lng = ~long, lat = ~lat, 
+             color = ~factpal(PriceBin))  %>%
+  # controls
+  setView(lng=center_lon, lat=center_lat,zoom = 12) %>%
+  
+  addLegend("bottomright", pal = factpal, values = ~PriceBin,
+            title = "House Price Distribution",
+            opacity = 1)
+```
+
+```{r corr1}
+plot1<-ggpairs(data=train, columns=3:7,
+               mapping = aes(col = "#800020"),
+               axisLabels="show")
+plot1
+
+plot2<-ggpairs(data=train, columns=c(3,8:12),
+               mapping = aes(color = "#800020"),
+               axisLabels="show")
+plot2
+
+plot3=ggpairs(data=train, columns=c(3,15,18,19),
+              mapping = aes(color = "#800020"),
+              axisLabels="show")
+plot3
+
+```
+
+## Corr Plot 
+
+```{r corr2}
+numericVars <- which(sapply(train, is.numeric)) #index vector numeric variables
+#numericVarNames <- names(numericVars) #saving names vector for use later on
+cat('There are', length(numericVars), 'numeric variables')
+```
+
+```{r corr3}
+
+all_numVar <- train[, numericVars]
+cor_numVar <- cor(all_numVar, use="pairwise.complete.obs") #correlations of all numeric variables
+
+#sort on decreasing correlations with SalePrice
+cor_sorted <- as.matrix(sort(cor_numVar[,'price'], decreasing = TRUE))
+ #select only high corelations
+CorHigh <- names(which(apply(cor_sorted, 1, function(x) abs(x)>0.3)))
+cor_numVar <- cor_numVar[CorHigh, CorHigh]
+
+corrplot.mixed(cor_numVar, tl.col="black", tl.pos = "lt")
+
+```
+
+
+```{r hist_plots}
+ggplot(all, aes_string("zipcode"))+
+  geom_bar(fill = "#800020")
+ggplot(all, aes_string("yr_built"))+
+  geom_bar(fill = "#800020")
+ggplot(all, aes_string("yr_renovated"))+
+  geom_bar(fill = "#800020")
+ggplot(all, aes_string("condition"))+
+  geom_bar(fill = "#800020")
+ggplot(all, aes_string("grade"))+
+  geom_bar(fill = "#800020")
+ggplot(all, aes_string("floors"))+
+  geom_bar(fill = "#800020")
+ggplot(all, aes_string("waterfront"))+
+  geom_bar(fill = "#800020")
+```
+
+As can be seen  from the plots above, the amount of houses built over the years constantly grew. Furthermore, only very few houses were renovated wich can be better seen below. Regarding condition, most of the houses are in 3rd condition followed by 4th. This also shows that only few houses are in a poor condition. This applies as well to the grade of the houses, which is mostly centered with only few low or high. Additionally the majority of the houses have 1 or two floors. Finally, a clear superiority of the houses don't have a waterfront.
+
+```{r scatter}
+ggplot(all[!is.na(all$price),], mapping = aes(x = sqft_living, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = zipcode, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = sqft_basement, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = sqft_above, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = sqft_lot, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = waterfront, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = condition, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = floors, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = grade, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = view, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = bedrooms, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = bathrooms, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+ggplot(all[!is.na(all$price),], mapping = aes(x = bathrooms, y = bedrooms)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+```
+
+# Feature Creation
+
+From the given features, the author came up with some more feature in order to increase the performance of the model.
+
+```{r var_creation}
+all$date <- as.Date(all$date, format = "%m/%d/%Y")
+
+all$age <- as.numeric(format(all$date, "%Y")) - all$yr_built
+
+all$yr_renovated[all$yr_renovated == 0] <- NA
+
+all$renovated_since <- as.numeric(format(all$date, "%Y")) - all$yr_renovated
+
+all$renovated_since[is.na(all$renovated_since)] = 0
+
+all$yr_renovated[is.na(all$yr_renovated)] = 0
+
+all$sqft_diff_15 <- all$sqft_living - all$sqft_living15
+
+all$sqft_diff_lot15 <- all$sqft_lot - all$sqft_lot15
+
+all$month <- month(all$date)
+
+```
+
+
+## Factorizing Variables
+When going back to the summary above, one can identify some numerical features which actually are categories. Therefore, those variables will be transformed to factors. 
+
+```{r fact_var}
+all$zipcode <- as.factor(all$zipcode)
+all$yr_built <- as.factor(all$yr_built)
+all$yr_renovated <- as.factor(all$yr_renovated)
+all$floors <- as.factor(all$floors)
+
+```
+
+
+```{r plots_of_fact_var}
+ggplot(all, aes_string("month")) + geom_bar(fill = "#800020") + labs(x= "Month",y= "Frequency" , title = "Month") + scale_fill_discrete()
+
+ggplot(all, aes(all$age)) + stat_bin(bins = 100, colour="black", fill="#800020") + labs(x= "Age",y= "Frequency" , title = "age") + scale_fill_discrete()
+
+ggplot(all, aes(all$renovated_since)) + stat_bin(bins = 100, colour="black", fill="#800020") + labs(x= "Renovated Since",y= "Frequency" , title = "Renovated since") + scale_fill_discrete()
+
+ggplot(all, aes(all$sqft_living)) + stat_bin(bins = 100, colour="black", fill="#800020") + labs(x= "square feet living",y= "Frequency" , title = "Histogram of sqft_living") + scale_fill_discrete()
+
+ggplot(all, aes(all$sqft_lot)) + stat_bin(bins = 100, colour="black", fill="#800020") + labs(x= "square feet lot",y= "Frequency" , title = "Histogram of sqft_lot") + scale_fill_discrete()
+
+ggplot(all, aes(all$sqft_basement)) + stat_bin(bins = 100, colour="black", fill="#800020") + labs(x= "square feet basement",y= "Frequency" , title = "Histogram of sqft_basement") + scale_fill_discrete()
+
+ggplot(all, aes(all$sqft_above)) + stat_bin(bins = 100, colour="black", fill="#800020") + labs(x= "square feet above",y= "Frequency" , title = "Histogram of sqft_above") + scale_fill_discrete()
+
+ggplot(data = all[!is.na(all$price),], mapping = aes(x = renovated_since, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+
+
+ggplot(data = all[!is.na(all$price),], mapping = aes(x = age, y = price)) + geom_point(colour = '#800020') + geom_smooth(method = 'lm')
+```
+
+In order to get an even better feeling of the data, not only optically but also numerically, some table with the most important variables are created.
+
+```{r numerical_display}
+table(is.na(train$yr_renovated)) 
+
+table(all$waterfront)    
+
+table(all$view)        
+
+table(all$bedrooms)     
+
+table(all$condition)     
+
+table(all$grade)         
+
+table(all$floors)
+
+```
+
+From those tables, one can derive that only approx 5% of the houses are renovated. Furthermore, only 0.5 % have a waterfront. Regarding view, apporx 10% of the houses have other view than 1,2,3,4. The average of the houses have betweeen 1 and 6 bedrooms. The condition is largely 3 and 4, whereas the grade is commonly between 5 and 9. Regarding floors, the plurality of the houses have 1 or 2 floors.
+
+# Variable Importance
+
+```{r var_importance}
+set.seed(2018)
+quick_RF <- randomForest(x=all[1:nrow(train),!(names(all) %in% c("yr_built", "yr_renovated", "zipcode"))], y=all$price[1:nrow(train)], ntree=100,importance=TRUE)
+imp_RF <- importance(quick_RF)
+imp_DF <- data.frame(Variables = row.names(imp_RF), MSE = imp_RF[,1])
+imp_DF <- imp_DF[order(imp_DF$MSE, decreasing = TRUE),]
+
+ggplot(imp_DF[1:20,], aes(x=reorder(Variables, MSE), y=MSE, fill=MSE)) + geom_bar(stat = 'identity') + labs(x = 'Variables', y= '% increase MSE if variable is randomly permuted') + coord_flip() + theme(legend.position="none")
+```
+
+
+# Clustering
+
+```{r cluster_amount}
+# Elbow method
+#fviz_nbclust(all[,c("bedrooms","bathrooms","sqft_living")], kmeans, method = "wss") +
+#  geom_vline(xintercept = 4, linetype = 2)+
+#  labs(subtitle = "Elbow method")
+
+# Silhouette method
+#fviz_nbclust(all[,c("bedrooms","bathrooms","sqft_living")], kmeans, method = "silhouette")+
+#  labs(subtitle = "Silhouette method")
+
+```
+
+```{r 4_clusters}
+cluster4 <- kmeans(scale(all[,c("bedrooms","bathrooms","sqft_living")]),4,100)
+all$cluster4<-factor(cluster4$cluster)
+```
+
+# Models
+## Baseline
+
+```{r baseline}
+allbaseline <- all[ , (names(all) %in% colall)]
+splitbaseline <- Train_Test_Split(allbaseline[1:nrow(train),])
+
+lambda <- 10^seq(-3, 3, length = 100)
+
+train_control_config <- trainControl(method = "repeatedcv", 
+                                     number = 5, 
+                                     repeats = 1,
+                                     returnResamp = "all")
+
+# Build the model
+set.seed(123)
+ridge <- train(
+  price ~., splitbaseline$train, method = "glmnet",
+  preProc = c("center","scale"),
+  trControl=train_control_config,
+  tuneGrid = expand.grid(alpha = 0, lambda = lambda)
+)
+# Model coefficients
+coef(ridge$finalModel, ridge$bestTune$lambda)
+# Make predictions
+predictionsr <- ridge %>% predict(splitbaseline$test)
+# Model prediction performance
+data.frame(
+  RMSE = RMSE(predictionsr, splitbaseline$test$price),
+  Rsquare = R2(predictionsr, splitbaseline$test$price),
+  Mape = MAPE(predictionsr, splitbaseline$test$price)
+)
+
+
+# Build the model
+set.seed(123)
+lasso <- train(
+  price ~., data = splitbaseline$train, method = "glmnet",
+  preProc = c("center","scale"),
+  trControl=train_control_config,
+  tuneGrid = expand.grid(alpha = 1, lambda = lambda)
+)
+# Model coefficients
+coef(lasso$finalModel, lasso$bestTune$lambda)
+# Make predictions
+predictionsl <- lasso %>% predict(splitbaseline$test)
+# Model prediction performance
+data.frame(
+  RMSE = RMSE(predictionsl, splitbaseline$test$price),
+  Rsquare = R2(predictionsl, splitbaseline$test$price),
+  Mape = MAPE(predictionsl, splitbaseline$test$price)
+)
+
+# Build the model
+set.seed(123)
+elastic <- train(
+  price ~., data = splitbaseline$train, method = "glmnet",
+  preProc = c("center","scale"),
+  trControl=train_control_config,
+  tuneLength = 10
+)
+# Model coefficients
+coef(elastic$finalModel, elastic$bestTune$lambda)
+# Make predictions
+predictionse <- elastic %>% predict(splitbaseline$test)
+# Model prediction performance
+data.frame(
+  RMSE = RMSE(predictionse, splitbaseline$test$price),
+  Rsquare = R2(predictionse, splitbaseline$test$price),
+  Mape = MAPE(predictionse, splitbaseline$test$price)
+)
+
+
+models <- list(ridge = ridge, lasso = lasso, elastic = elastic)
+resamples(models) %>% summary( metric = "RMSE")
+
+```
+
+```{r varimp1}
+lassoVarImp <- varImp(lasso,scale=F)
+lassoImportance <- lassoVarImp$importance
+
+varsSelectedlasso    <- which(lassoImportance$Overall!=0)
+varsNotSelectedlasso <- which(lassoImportance$Overall==0)
+
+ridgeVarImp <- varImp(ridge,scale=F)
+ridgeImportance <- ridgeVarImp$importance
+
+varsSelectedridge    <- which(ridgeImportance$Overall!=0)
+varsNotSelectedridge <- which(ridgeImportance$Overall==0)
+
+elasticVarImp <- varImp(elastic,scale=F)
+elasticImportance <- elasticVarImp$importance
+
+varsSelectedelastic    <- which(lassoImportance$Overall!=0)
+varsNotSelectedelastic <- which(lassoImportance$Overall==0)
+
+cat('Ridge uses', length(varsSelectedridge), 'variables in its model, and did not select', length(varsNotSelectedridge), 'variables.')  
+
+cat('Lasso uses', length(varsSelectedlasso), 'variables in its model, and did not select', length(varsNotSelectedlasso), 'variables.')  
+
+cat('Elastic uses', length(varsSelectedelastic), 'variables in its model, and did not select', length(varsNotSelectedelastic), 'variables.')  
+
+```
+
+## With adjustments
+
+```{r tuned}
+exclude <- c('id', 'date', 'sqft_lot', 'yr_built', 'sqft_diff_15', 'sqft_diff_lot15')
+allfinal <- all[, !names(all)  %in% exclude]
+
+splitfinal <- Train_Test_Split(allfinal[1:nrow(train),])
+
+lambda <- 10^seq(-3, 3, length = 100)
+
+
+# Build the model
+set.seed(123)
+ridge1 <- train(
+  price ~., splitfinal$train, method = "glmnet",
+  preProc = c("center","scale"),
+  trControl=train_control_config,
+  tuneGrid = expand.grid(alpha = 0, lambda = lambda)
+)
+# Model coefficients
+coef(ridge1$finalModel, ridge1$bestTune$lambda)
+# Make predictions
+predictionsr2 <- ridge1 %>% predict(splitfinal$test)
+# Model prediction performance
+data.frame(
+  RMSE = RMSE(predictionsr2, splitfinal$test$price),
+  Rsquare = R2(predictionsr2, splitfinal$test$price),
+  Mape = MAPE(predictionsr2, splitfinal$test$price)
+)
+
+
+# Build the model
+set.seed(123)
+lasso1 <- train(
+  price ~., data = splitfinal$train, method = "glmnet",
+  preProc = c("center","scale"),
+  trControl=train_control_config,
+  tuneGrid = expand.grid(alpha = 1, lambda = lambda)
+)
+# Model coefficients
+coef(lasso1$finalModel, lasso1$bestTune$lambda)
+# Make predictions
+predictionsl2 <- lasso1 %>% predict(splitfinal$test)
+# Model prediction performance
+data.frame(
+  RMSE = RMSE(predictionsl2, splitfinal$test$price),
+  Rsquare = R2(predictionsl2, splitfinal$test$price),
+  Mape = MAPE(predictionsl2, splitfinal$test$price)
+)
+
+# Build the model
+set.seed(123)
+elastic1 <- train(
+  price ~., data = splitfinal$train, method = "glmnet",
+  preProc = c("center","scale"),
+  trControl=train_control_config,
+  tuneLength = 10
+)
+# Model coefficients
+coef(elastic1$finalModel, elastic1$bestTune$lambda)
+# Make predictions
+predictionse2 <- elastic1 %>% predict(splitfinal$test)
+# Model prediction performance
+data.frame(
+  RMSE = RMSE(predictionse2, splitfinal$test$price),
+  Rsquare = R2(predictionse2, splitfinal$test$price),
+  MAPE = MAPE(predictionse2, splitfinal$test$price)
+)
+
+
+models1 <- list(ridge = ridge1, lasso = lasso1, elastic = elastic1)
+resamples(models1) %>% summary( metric = "RMSE")
+
+
+```
+
+```{r varimp2}
+lassoVarImp1 <- varImp(lasso1,scale=F)
+lassoImportance1 <- lassoVarImp1$importance
+
+varsSelectedlasso1    <- which(lassoImportance1$Overall!=0)
+varsNotSelectedlasso1 <- which(lassoImportance1$Overall==0)
+
+ridgeVarImp1 <- varImp(ridge1,scale=F)
+ridgeImportance1 <- ridgeVarImp1$importance
+
+varsSelectedridge1    <- which(ridgeImportance1$Overall!=0)
+varsNotSelectedridge1 <- which(ridgeImportance1$Overall==0)
+
+elasticVarImp1 <- varImp(elastic1,scale=F)
+elasticImportance1 <- elasticVarImp1$importance
+
+varsSelectedelastic1    <- which(lassoImportance1$Overall!=0)
+varsNotSelectedelastic1 <- which(lassoImportance1$Overall==0)
+
+cat('Ridge uses', length(varsSelectedridge), 'variables in its model, and did not select', length(varsNotSelectedridge), 'variables.')  
+
+cat('Lasso uses', length(varsSelectedlasso), 'variables in its model, and did not select', length(varsNotSelectedlasso), 'variables.')  
+
+cat('Elastic uses', length(varsSelectedelastic), 'variables in its model, and did not select', length(varsNotSelectedelastic), 'variables.')  
+```
+
+As can be seen above, the model that performs best is the elastic net. Therefore, this model will be finally used.
+
+## Applying the model
+
+```{r predicting}
+train1 <- allfinal[1:nrow(train),]
+test1 <- allfinal[(nrow(train)+1):nrow(all),]
+
+set.seed(123)
+elastic <- train(
+  price ~., data = train1, method = "glmnet",
+  preProc = c("center","scale"),
+  trControl=train_control_config,
+  tuneLength = 10
+)
+# Model coefficients
+coef(elastic$finalModel, elastic$bestTune$lambda)
+# Make predictions
+predictionsfinal <- elastic %>% predict(test1)
+final.pred <- as.numeric(exp(elastic %>% predict(test1)))
+
+final.pred[is.na(final.pred)]
+
+lasso_submission <- data.frame(Id = test_labels, price= (final.pred))
+colnames(lasso_submission) <-c("Id", "price")
+final <-ggplot(lasso_submission, aes(x = price)) +
+  geom_histogram(fill = '#800020', binwidth = 200000, center = 100000) +
+  theme_linedraw() + 
+  labs(x = 'Price 1', y = 'Frequency', title = "House Sales") +
+  scale_y_continuous(labels = scales::comma, limits = c(0,8000)) + 
+  scale_x_continuous(labels = scales::comma)
+final
+
+write.csv(lasso_submission, file = "submission.csv", row.names = FALSE)
+
+
+```
+
+
+
